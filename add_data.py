@@ -417,22 +417,119 @@ def add_supplier_manual(db):
     print(f"\n  Добавлен: [{sup_id}] {name}")
 
 
-def add_supplier_auto(db):
-    name, inn, address, phone, email = random.choice(REAL_SUPPLIERS)
-    inn_unique = f"{inn}-{datetime.now().strftime('%f')}"
+def fetch_supplier_from_api():
+    """
+    Получает реальное название фармкомпании из OpenFDA,
+    контактные данные генерирует через Faker ru_RU.
+    Возвращает словарь с полями en/ru или None при ошибке.
+    """
+    try:
+        skip = random.randint(0, 1000)
+        url = (
+            "https://api.fda.gov/drug/label.json"
+            f"?search=openfda.manufacturer_name:*&limit=10&skip={skip}"
+        )
+        resp = requests.get(url, timeout=6)
+        resp.raise_for_status()
+        data = resp.json()
 
-    print("\n  Сгенерированные данные:")
+        names = []
+        for result in data["results"]:
+            for n in result.get("openfda", {}).get("manufacturer_name", []):
+                if n and len(n) > 3:
+                    names.append(n)
+
+        if not names:
+            return None
+
+        name_en = random.choice(names)[:80]
+
+        # Контактные данные — Faker ru_RU
+        inn     = fake.numerify("##########")          # 10 цифр
+        address = fake.address().replace("\n", ", ")
+        phone   = fake.phone_number()
+        email   = fake.free_email()
+
+        return {
+            "name_en": name_en,
+            "inn":     inn,
+            "address": address,
+            "phone":   phone,
+            "email":   email,
+        }
+    except Exception:
+        return None
+
+
+def _print_supplier_preview(label, name, data):
+    print(f"\n  ── {label} {'─' * max(1, 34 - len(label))}")
     print(f"    Название: {name}")
-    print(f"    ИНН:      {inn_unique}")
-    print(f"    Адрес:    {address}")
-    print(f"    Телефон:  {phone}")
-    print(f"    Email:    {email}")
+    print(f"    ИНН:      {data['inn']}")
+    print(f"    Адрес:    {data['address']}")
+    print(f"    Телефон:  {data['phone']}")
+    print(f"    Email:    {data['email']}")
 
-    if confirm():
-        sup_id = db.add_supplier(name, inn_unique, address, phone, email)
-        print(f"  Добавлен с id={sup_id}.")
+
+def add_supplier_auto(db):
+    print("  Запрос к OpenFDA API...", end=" ", flush=True)
+    api_result = fetch_supplier_from_api()
+
+    if api_result:
+        print("получено.\n")
+        name_en = api_result["name_en"]
+        contact = api_result
+        source  = "OpenFDA API + Faker"
     else:
-        print("  Отменено.")
+        print("недоступен, используем локальный список.\n")
+        name_en, inn, address, phone, email = random.choice(REAL_SUPPLIERS)
+        contact = {
+            "inn":     f"{inn}-{datetime.now().strftime('%f')}",
+            "address": address,
+            "phone":   phone,
+            "email":   email,
+        }
+        source = "локальный список"
+
+    # Показываем оригинал
+    _print_supplier_preview("Оригинал (английский)", name_en, contact)
+
+    # Предлагаем перевести название
+    print()
+    if input("  Перевести название на русский? (y/n): ").strip().lower() == "y":
+        print("  Перевод...", end=" ", flush=True)
+        name_ru = _translate(name_en)
+        print("готово.")
+
+        _print_supplier_preview("Оригинал (английский)", name_en, contact)
+        _print_supplier_preview("Перевод  (русский)",    name_ru, contact)
+
+        print()
+        idx = choose("Какой вариант названия добавить?", [
+            "Английский оригинал",
+            "Русский перевод",
+            "Отмена",
+        ])
+        if idx == 0:
+            name = name_en
+        elif idx == 1:
+            name = name_ru
+        else:
+            print("  Отменено.")
+            return
+    else:
+        name = name_en
+        if not confirm("\n  Добавить? (y/n): "):
+            print("  Отменено.")
+            return
+
+    sup_id = db.add_supplier(
+        name,
+        contact["inn"],
+        contact["address"],
+        contact["phone"],
+        contact["email"],
+    )
+    print(f"  Добавлен с id={sup_id}: {name} ({source}).")
 
 # ─── Главный цикл ─────────────────────────────────────────────────────────────
 
