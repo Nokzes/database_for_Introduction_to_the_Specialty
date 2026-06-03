@@ -156,11 +156,81 @@ class PharmacyDB:
         with self._conn() as conn:
             return conn.execute("SELECT * FROM medicines").fetchall()
 
-    def search_medicines(self, query):
-        q = query.lower()
+    def search_medicines(self, query, field="name"):
+        """
+        Поиск лекарств. field: name | manufacturer | dosage_form | prescription | all
+        Для prescription query: 'да'/'рецепт' → рецептурные, 'нет' → безрецептурные.
+        """
+        q = query.lower().strip()
         with self._conn() as conn:
             rows = conn.execute("SELECT * FROM medicines").fetchall()
-        return [r for r in rows if q in r["name"].lower()]
+
+        if field == "prescription":
+            rx = q in ("да", "рецепт", "рецептурный", "1", "yes")
+            return [r for r in rows if bool(r["requires_prescription"]) == rx]
+
+        field_map = {
+            "name":         lambda r: r["name"] or "",
+            "manufacturer": lambda r: r["manufacturer"] or "",
+            "dosage_form":  lambda r: r["dosage_form"] or "",
+            "all":          lambda r: " ".join(filter(None, [
+                                r["name"], r["manufacturer"], r["dosage_form"]
+                            ])),
+        }
+        get_text = field_map.get(field, field_map["name"])
+        return [r for r in rows if q in get_text(r).lower()]
+
+    def search_employees(self, query, field="full_name"):
+        """
+        Поиск сотрудников. field: full_name | role | login | all
+        Для role можно вводить: фармацевт, администратор, сисадмин или en-значения.
+        """
+        q = query.lower().strip()
+        role_aliases = {
+            "фармацевт": "pharmacist", "pharmacist": "pharmacist",
+            "администратор": "admin",  "admin": "admin",
+            "системный": "sysadmin",   "сисадмин": "sysadmin", "sysadmin": "sysadmin",
+        }
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT id, full_name, role, login, created_at FROM employees"
+            ).fetchall()
+
+        if field == "role":
+            target = role_aliases.get(q, q)
+            return [r for r in rows if target in r["role"].lower()]
+
+        field_map = {
+            "full_name": lambda r: r["full_name"] or "",
+            "login":     lambda r: r["login"] or "",
+            "all":       lambda r: " ".join(filter(None, [
+                             r["full_name"], r["role"], r["login"]
+                         ])),
+        }
+        get_text = field_map.get(field, field_map["full_name"])
+        return [r for r in rows if q in get_text(r).lower()]
+
+    def search_suppliers(self, query, field="name"):
+        """
+        Поиск поставщиков. field: name | inn | address | phone | email | all
+        """
+        q = query.lower().strip()
+        with self._conn() as conn:
+            rows = conn.execute("SELECT * FROM suppliers").fetchall()
+
+        field_map = {
+            "name":    lambda r: r["name"] or "",
+            "inn":     lambda r: r["inn"] or "",
+            "address": lambda r: r["address"] or "",
+            "phone":   lambda r: r["phone"] or "",
+            "email":   lambda r: r["email"] or "",
+            "all":     lambda r: " ".join(filter(None, [
+                           r["name"], r["inn"], r["address"],
+                           r["phone"], r["email"]
+                       ])),
+        }
+        get_text = field_map.get(field, field_map["name"])
+        return [r for r in rows if q in get_text(r).lower()]
 
     def get_medicine_by_id(self, medicine_id):
         with self._conn() as conn:
